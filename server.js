@@ -22,14 +22,11 @@ wss.on('connection', function connection(ws, req) {
     console.log('New client connected from:', req.socket.remoteAddress);
     clients.add(ws);
     
-    // Send welcome message
-    ws.send('public_message|Welcome|Connected to WallMob notification server');
-    
-    // Send recent message history to new client
+    // Send recent message history to new client (last 5 messages)
     messageHistory.slice(-5).forEach(msg => {
         ws.send(msg);
     });
-    
+
     ws.on('message', function incoming(message) {
         console.log('Received:', message.toString());
         
@@ -213,7 +210,7 @@ app.post('/send-notification', (req, res) => {
     }
 });
 
-// Health check for Render
+// Health check
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'healthy' });
 });
@@ -226,7 +223,6 @@ app.use((req, res) => {
 // Start server
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`WebSocket server running on port ${PORT}`);
-    console.log(`WebSocket URL: ws://localhost:${PORT}`);
 });
 
 // Clean up disconnected clients periodically
