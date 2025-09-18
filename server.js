@@ -17,13 +17,37 @@ const wss = new WebSocket.Server({ server });
 const clients = new Set();
 let messageHistory = [];
 
+// Function to check if a message is a real notification (not system message)
+function isRealNotification(message) {
+    const systemKeywords = [
+        'Initial Sync',
+        'Connected to',
+        'Connection successful',
+        'request_initial_data',
+        'ping',
+        'pong',
+        'heartbeat',
+        'system_',
+        'debug_',
+        'test_connection'
+    ];
+    
+    const lowerMessage = message.toLowerCase();
+    return !systemKeywords.some(keyword => lowerMessage.includes(keyword.toLowerCase()));
+}
+
 // WebSocket connection handling
 wss.on('connection', function connection(ws, req) {
     console.log('New client connected from:', req.socket.remoteAddress);
     clients.add(ws);
     
     // Send recent message history to new client (last 5 messages)
-    messageHistory.slice(-5).forEach(msg => {
+    // Only send real notifications, not system messages
+    const realNotifications = messageHistory
+        .filter(msg => isRealNotification(msg))
+        .slice(-5);
+    
+    realNotifications.forEach(msg => {
         ws.send(msg);
     });
 
@@ -33,20 +57,27 @@ wss.on('connection', function connection(ws, req) {
         try {
             const msgStr = message.toString();
             
-            // Handle initial data request
+            // Handle initial data request - No automatic notification
             if (msgStr.includes('request_initial_data')) {
-                ws.send('new_wallpaper|Initial Sync|Your wallpapers are up to date');
+                console.log('Client requested initial data - no notification sent');
                 return;
             }
             
-            // Store message in history
-            messageHistory.push(msgStr);
-            if (messageHistory.length > 50) {
-                messageHistory = messageHistory.slice(-50);
+            // Only store and broadcast real notifications (filter out system messages)
+            if (isRealNotification(msgStr)) {
+                // Store message in history (avoid duplicates)
+                if (!messageHistory.includes(msgStr)) {
+                    messageHistory.push(msgStr);
+                    if (messageHistory.length > 50) {
+                        messageHistory = messageHistory.slice(-50);
+                    }
+                }
+                
+                // Broadcast to all clients except sender
+                broadcastToOthers(ws, msgStr);
+            } else {
+                console.log('System message filtered out:', msgStr);
             }
-            
-            // Broadcast to all clients except sender
-            broadcastToOthers(ws, msgStr);
             
         } catch (error) {
             console.error('Error processing message:', error);
@@ -164,11 +195,14 @@ app.get('/', (req, res) => {
 });
 
 app.get('/status', (req, res) => {
+    const realNotifications = messageHistory.filter(msg => isRealNotification(msg));
+    
     res.json({
         status: 'online',
         clients: clients.size,
         uptime: process.uptime(),
-        messageHistory: messageHistory.length,
+        totalMessages: messageHistory.length,
+        realNotifications: realNotifications.length,
         timestamp: new Date().toISOString()
     });
 });
@@ -186,20 +220,31 @@ app.post('/send-notification', (req, res) => {
         
         const notification = `${type}|${title}|${message}|${extraData}`;
         
-        // Add to message history
-        messageHistory.push(notification);
-        if (messageHistory.length > 50) {
-            messageHistory = messageHistory.slice(-50);
+        // Only store and broadcast real notifications
+        if (isRealNotification(notification)) {
+            // Add to message history (avoid duplicates)
+            if (!messageHistory.includes(notification)) {
+                messageHistory.push(notification);
+                if (messageHistory.length > 50) {
+                    messageHistory = messageHistory.slice(-50);
+                }
+            }
+            
+            broadcastToAll(notification);
+            
+            res.json({
+                success: true,
+                message: 'Real notification sent successfully',
+                clients: clients.size,
+                notification: notification
+            });
+        } else {
+            res.json({
+                success: false,
+                message: 'System message filtered out - not a real notification',
+                notification: notification
+            });
         }
-        
-        broadcastToAll(notification);
-        
-        res.json({
-            success: true,
-            message: 'Notification sent successfully',
-            clients: clients.size,
-            notification: notification
-        });
         
     } catch (error) {
         console.error('Error in /send-notification:', error);
